@@ -345,6 +345,7 @@ const [quality, setQuality] = React.useState('2k');
             const [searchQuery, setSearchQuery] = React.useState('');
             const [selectedFilterStyle, setSelectedFilterStyle] = React.useState('all');
             const [copiedId, setCopiedId] = React.useState(null);
+            const [genError, setGenError] = React.useState('');
            
             const [modalIcon, setModalIcon] = React.useState(null);
             const [refineText, setRefineText] = React.useState('');
@@ -395,12 +396,17 @@ const [quality, setQuality] = React.useState('2k');
                 setIsGenerating(true);
                 setCurrentProgress({ current: 1, total: lines.length, currentPrompt: lines[0] });
 
-                const apiKey = (localStorage.getItem('kasanstock_gemini_key') || '').trim();
+                const keyEl = document.getElementById('gemini-key-input');
+                const modelEl = document.getElementById('gemini-model-input');
+                const apiKey = (keyEl?.value || localStorage.getItem('kasanstock_gemini_key') || '').trim();
+                const model = (modelEl?.value || localStorage.getItem('kasanstock_gemini_model') || 'gemini-2.5-flash-image').trim();
+                if (apiKey) { localStorage.setItem('kasanstock_gemini_key', apiKey); localStorage.setItem('kasanstock_gemini_model', model); }
                 if (!apiKey) {
-                    alert('Masukkan Gemini API Key dulu (lihat kolom di atas bagian input).');
+                    setGenError('Masukkan Gemini API Key dulu (kolom 🔑 di atas).');
                     setIsGenerating(false);
                     return;
                 }
+                setGenError('');
 
                 for (let i = 0; i < lines.length; i++) {
                     const userPrompt = lines[i];
@@ -423,14 +429,13 @@ role: "user",
                             parts: [{ text: finalPrompt }]
                         }],
                         generationConfig: {
-                            responseModalities: ['IMAGE'],
-                            imageConfig: { aspectRatio: "1:1" }
+                            responseModalities: ['IMAGE']
                         }
                     };
 
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
                     try {
-                        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`;
-                       
                         const result = await fetchWithRetry(apiUrl, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -466,6 +471,7 @@ role: "user",
                         }
                     } catch (error) {
                         console.error("Failed to generate image for prompt:", userPrompt, error);
+                        setGenError(`Gagal generate "${userPrompt}": ${error?.message || error}`);
                     }
 
                     if (i < lines.length - 1) {
@@ -638,6 +644,14 @@ const ctx = canvas.getContext('2d');
                                         defaultValue={localStorage.getItem('kasanstock_gemini_key') || ''}
                                         onBlur={(e) => { const v = (e.target.value || '').trim(); if (v) localStorage.setItem('kasanstock_gemini_key', v); }}
                                     />
+                                    <input
+                                        id="gemini-model-input"
+                                        type="text"
+                                        className="w-full p-2.5 mt-2 border border-brand-500/30 focus:border-brand-500 rounded-xl focus:ring-2 focus:ring-brand-500/20 outline-none text-xs text-white bg-black/80 placeholder-gray-600 font-mono transition-all"
+                                        placeholder="Model (default: gemini-2.5-flash-image)"
+                                        defaultValue={localStorage.getItem('kasanstock_gemini_model') || 'gemini-2.5-flash-image'}
+                                        onBlur={(e) => { const v = (e.target.value || '').trim(); if (v) localStorage.setItem('kasanstock_gemini_model', v); }}
+                                    />
                                 </div>
 
                                 <div>
@@ -740,6 +754,12 @@ const ctx = canvas.getContext('2d');
                                             <div className="bg-brand-500 h-full transition-all duration-300" style={{ width: `${(currentProgress.current / currentProgress.total) * 100}%` }}></div>
                                         </div>
                                         <p className="text-[11px] text-gray-400 mt-2 truncate font-mono">▶️ {currentProgress.currentPrompt}</p>
+                                    </div>
+                                )}
+
+                                {genError && (
+                                    <div className="bg-red-950/60 border border-red-500/50 p-3 rounded-xl text-xs text-red-300 font-mono break-words">
+                                        ⚠️ {genError}
                                     </div>
                                 )}
                             </div>

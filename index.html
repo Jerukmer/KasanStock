@@ -390,91 +390,98 @@ const [quality, setQuality] = React.useState('2k');
             };
 
             const handleGenerate = async (overriddenPrompts = null) => {
-                const lines = overriddenPrompts || promptsText.split('\n').map(p => p.trim()).filter(p => p.length > 0);
-                if (lines.length === 0) return;
+                const handleGenerate = async (overriddenPrompts = null) => {
+                    const lines = overriddenPrompts || promptsText.split('\n').map(p => p.trim()).filter(p => p.length > 0);
+                    if (lines.length === 0) return;
 
-                setIsGenerating(true);
-                setCurrentProgress({ current: 1, total: lines.length, currentPrompt: lines[0] });
+                    setIsGenerating(true);
+                    setCurrentProgress({ current: 1, total: lines.length, currentPrompt: lines[0] });
+                    setGenError('');
 
-                const keyEl = document.getElementById('gemini-key-input');
-                const modelEl = document.getElementById('gemini-model-input');
-                const apiKey = (keyEl?.value || localStorage.getItem('kasanstock_gemini_key') || '').trim();
-                const model = (modelEl?.value || localStorage.getItem('kasanstock_gemini_model') || 'gemini-2.5-flash-image').trim();
-                if (apiKey) { localStorage.setItem('kasanstock_gemini_key', apiKey); localStorage.setItem('kasanstock_gemini_model', model); }
-                if (!apiKey) {
-                    setGenError('Masukkan Gemini API Key dulu (kolom 🔑 di atas).');
-                    setIsGenerating(false);
-                    return;
-                }
-                setGenError('');
+                    const keyEl = document.getElementById('gemini-key-input');
+                    const modelEl = document.getElementById('gemini-model-input');
+                    const apiKey = (keyEl?.value || localStorage.getItem('kasanstock_gemini_key') || '').trim();
+                    const model = (modelEl?.value || localStorage.getItem('kasanstock_gemini_model') || 'gemini-2.5-flash-image').trim();
+                    if (apiKey) { localStorage.setItem('kasanstock_gemini_key', apiKey); localStorage.setItem('kasanstock_gemini_model', model); }
+                    const useGemini = !!apiKey;
 
-                for (let i = 0; i < lines.length; i++) {
-                    const userPrompt = lines[i];
-                    setCurrentProgress({ current: i + 1, total: lines.length, currentPrompt: userPrompt });
+                    for (let i = 0; i < lines.length; i++) {
+                        const userPrompt = lines[i];
+                        setCurrentProgress({ current: i + 1, total: lines.length, currentPrompt: userPrompt });
 
-                    const layoutDesc = type === 'set'
-                        ? "A grid set of multiple matching microstock vector icons arranged neatly inside a square canvas"
-                        : "A single, large, central microstock vector icon of";
+                        const layoutDesc = type === 'set'
+                            ? "A grid set of multiple matching microstock vector icons arranged neatly inside a square canvas"
+                            : "A single, large, central microstock vector icon of";
 
-                    const finalPrompt = `EXACT STRICT 1:1 SQUARE ASPECT RATIO CANVAS. ${layoutDesc} "${userPrompt}".
-                        Design style: ${styleModifiers[style]}.
-                        Quality & fidelity specification: ${qualityModifiers[quality]}.
-                        BACKGROUND: Pure solid clean white background (#FFFFFF) with no gradients, shadows, borders, or text.
-                        CRITICAL SPECIFICATION: The core icon subject MUST be perfectly centered and scaled up large to fill ~85% of the 1:1 square canvas frame with uniform margins on all sides. High quality vector graphics studio export.`;
+                        const finalPrompt = `EXACT STRICT 1:1 SQUARE ASPECT RATIO CANVAS. ${layoutDesc} "${userPrompt}".
+                            Design style: ${styleModifiers[style]}.
+                            Quality & fidelity specification: ${qualityModifiers[quality]}.
+                            BACKGROUND: Pure solid clean white background (#FFFFFF) with no gradients, shadows, borders, or text.
+                            CRITICAL SPECIFICATION: The core icon subject MUST be perfectly centered and scaled up large to fill ~85% of the 1:1 square canvas frame with uniform margins on all sides. High quality vector graphics studio export.`;
 
-                    const payload = {
-                        contents: [{
+                        let imageUrl = null;
 
-role: "user",
-                            parts: [{ text: finalPrompt }]
-                        }],
-                        generationConfig: {
-                            responseModalities: ['IMAGE']
-                        }
-                    };
+                        try {
+                            if (useGemini) {
+                                const payload = {
+                                    contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
+                                    generationConfig: { responseModalities: ['IMAGE'] }
+                                };
+                                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+                                const result = await fetchWithRetry(apiUrl, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(payload)
+                                });
+                                const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+                                if (part && part.inlineData) {
+                                    imageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                                }
+                            } else {
+                                // Pollinations (NO API KEY, gratis)
+                                const size = qualityPixelMap[quality] || 1024;
+                                const safePrompt = encodeURIComponent(finalPrompt);
+                                const pollUrl = `https://image.pollinations.xyz/prompt/${safePrompt}?width=${size}&height=${size}&nologo=true&model=flux&seed=${Date.now()}`;
+                                // fetch gambar lalu ubah ke dataURL biar konsisten dg IndexedDB/download
+                                const resp = await fetchWithRetry(pollUrl, {}, 3);
+                                const blob = await resp.blob();
+                                imageUrl = await new Promise((res, rej) => {
+                                    const reader = new FileReader();
+                                    reader.onload = () => res(reader.result);
+                                    reader.onerror = rej;
+                                    reader.readAsDataURL(blob);
+                                });
+                            }
 
-                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+                            if (imageUrl) {
+                                const newIcon = {
+                                    id: 'icon_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+                                    url: imageUrl,
+                                    prompt: userPrompt,
+                                    type: type,
+                                    style: style,
+                                    quality: quality,
+                                    timestamp: Date.now()
+                                };
 
-                    try {
-                        const result = await fetchWithRetry(apiUrl, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
-                        });
+                                setActiveIcon(newIcon);
+                                await saveIconToDB(newIcon);
+                                await loadSavedIcons();
 
-                        const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-
-                        if (part && part.inlineData) {
-                            const imageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-                           
-                            const newIcon = {
-                                id: 'icon_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
-                                url: imageUrl,
-                                prompt: userPrompt,
-                                type: type,
-                                style: style,
-                                quality: quality,
-                                timestamp: Date.now()
-                            };
-
-                            setActiveIcon(newIcon);
-                            await saveIconToDB(newIcon);
-                            await loadSavedIcons();
-
-                            if (autoDownload) {
-                                try {
-                                    await downloadImage(newIcon);
-                                } catch (dlErr) {
-                                    console.error("Auto download failed:", dlErr);
+                                if (autoDownload) {
+                                    try {
+                                        await downloadImage(newIcon);
+                                    } catch (dlErr) {
+                                        console.error("Auto download failed:", dlErr);
+                                    }
                                 }
                             }
+                        } catch (error) {
+                            console.error("Failed to generate image for prompt:", userPrompt, error);
+                            setGenError(`Gagal generate "${userPrompt}": ${error?.message || error}`);
                         }
-                    } catch (error) {
-                        console.error("Failed to generate image for prompt:", userPrompt, error);
-                        setGenError(`Gagal generate "${userPrompt}": ${error?.message || error}`);
-                    }
 
-                    if (i < lines.length - 1) {
+                        if (i < lines.length - 1) {
                         await new Promise(r => setTimeout(r, 1200));
                     }
                 }
@@ -640,7 +647,7 @@ const ctx = canvas.getContext('2d');
                                         id="gemini-key-input"
                                         type="password"
                                         className="w-full p-3 border border-brand-500/30 focus:border-brand-500 rounded-xl focus:ring-2 focus:ring-brand-500/20 outline-none text-sm text-white bg-black/80 placeholder-gray-600 font-mono transition-all mb-3"
-                                        placeholder="Paste Gemini API Key di sini (disimpan otomatis)"
+                                        placeholder="Opsional: Gemini API Key (kosongkan = pakai Pollinations gratis)"
                                         defaultValue={localStorage.getItem('kasanstock_gemini_key') || ''}
                                         onBlur={(e) => { const v = (e.target.value || '').trim(); if (v) localStorage.setItem('kasanstock_gemini_key', v); }}
                                     />

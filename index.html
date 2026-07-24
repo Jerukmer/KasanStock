@@ -72,8 +72,7 @@
     <div id="root"></div>
 
     <script>
-import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
-const tg = window.Telegram.WebApp;
+const tg = (window.Telegram && window.Telegram.WebApp) || { ready(){}, expand(){}, close(){}, setHeaderColor(){}, sendData(){} };
 tg.ready();
 tg.expand();
 tg.setHeaderColor('bg_color');
@@ -346,7 +345,6 @@ const App = () => {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [selectedFilterStyle, setSelectedFilterStyle] = React.useState('all');
   const [copiedId, setCopiedId] = React.useState(null);
-  const [genError, setGenError] = React.useState('');
   const [modalIcon, setModalIcon] = React.useState(null);
   const [refineText, setRefineText] = React.useState('');
   const t = translations[lang];
@@ -391,16 +389,12 @@ const App = () => {
       total: lines.length,
       currentPrompt: lines[0]
     });
-    setGenError('');
-    const keyEl = document.getElementById('gemini-key-input');
-    const modelEl = document.getElementById('gemini-model-input');
-    const apiKey = (keyEl?.value || localStorage.getItem('kasanstock_gemini_key') || '').trim();
-    const model = (modelEl?.value || localStorage.getItem('kasanstock_gemini_model') || 'gemini-2.5-flash-image').trim();
-    if (apiKey) {
-      localStorage.setItem('kasanstock_gemini_key', apiKey);
-      localStorage.setItem('kasanstock_gemini_model', model);
+    const apiKey = (localStorage.getItem('kasanstock_gemini_key') || '').trim();
+    if (!apiKey) {
+      alert('Masukkan Gemini API Key dulu (lihat kolom di atas bagian input).');
+      setIsGenerating(false);
+      return;
     }
-    const useGemini = !!apiKey;
     for (let i = 0; i < lines.length; i++) {
       const userPrompt = lines[i];
       setCurrentProgress({
@@ -410,52 +404,36 @@ const App = () => {
       });
       const layoutDesc = type === 'set' ? "A grid set of multiple matching microstock vector icons arranged neatly inside a square canvas" : "A single, large, central microstock vector icon of";
       const finalPrompt = `EXACT STRICT 1:1 SQUARE ASPECT RATIO CANVAS. ${layoutDesc} "${userPrompt}".
-                            Design style: ${styleModifiers[style]}.
-                            Quality & fidelity specification: ${qualityModifiers[quality]}.
-                            BACKGROUND: Pure solid clean white background (#FFFFFF) with no gradients, shadows, borders, or text.
-                            CRITICAL SPECIFICATION: The core icon subject MUST be perfectly centered and scaled up large to fill ~85% of the 1:1 square canvas frame with uniform margins on all sides. High quality vector graphics studio export.`;
-      let imageUrl = null;
-      try {
-        if (useGemini) {
-          const payload = {
-            contents: [{
-              role: "user",
-              parts: [{
-                text: finalPrompt
-              }]
-            }],
-            generationConfig: {
-              responseModalities: ['IMAGE']
-            }
-          };
-          const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-          const result = await fetchWithRetry(apiUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-          });
-          const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-          if (part && part.inlineData) {
-            imageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                        Design style: ${styleModifiers[style]}.
+                        Quality & fidelity specification: ${qualityModifiers[quality]}.
+                        BACKGROUND: Pure solid clean white background (#FFFFFF) with no gradients, shadows, borders, or text.
+                        CRITICAL SPECIFICATION: The core icon subject MUST be perfectly centered and scaled up large to fill ~85% of the 1:1 square canvas frame with uniform margins on all sides. High quality vector graphics studio export.`;
+      const payload = {
+        contents: [{
+          role: "user",
+          parts: [{
+            text: finalPrompt
+          }]
+        }],
+        generationConfig: {
+          responseModalities: ['IMAGE'],
+          imageConfig: {
+            aspectRatio: "1:1"
           }
-        } else {
-          // Pollinations (NO API KEY, gratis)
-          const size = qualityPixelMap[quality] || 1024;
-          const safePrompt = encodeURIComponent(finalPrompt);
-          const pollUrl = `https://image.pollinations.xyz/prompt/${safePrompt}?width=${size}&height=${size}&nologo=true&model=flux&seed=${Date.now()}`;
-          // fetch gambar lalu ubah ke dataURL biar konsisten dg IndexedDB/download
-          const resp = await fetchWithRetry(pollUrl, {}, 3);
-          const blob = await resp.blob();
-          imageUrl = await new Promise((res, rej) => {
-            const reader = new FileReader();
-            reader.onload = () => res(reader.result);
-            reader.onerror = rej;
-            reader.readAsDataURL(blob);
-          });
         }
-        if (imageUrl) {
+      };
+      try {
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`;
+        const result = await fetchWithRetry(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+        const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+        if (part && part.inlineData) {
+          const imageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
           const newIcon = {
             id: 'icon_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
             url: imageUrl,
@@ -478,7 +456,6 @@ const App = () => {
         }
       } catch (error) {
         console.error("Failed to generate image for prompt:", userPrompt, error);
-        setGenError(`Gagal generate "${userPrompt}": ${error?.message || error}`);
       }
       if (i < lines.length - 1) {
         await new Promise(r => setTimeout(r, 1200));
@@ -590,451 +567,315 @@ const App = () => {
     }));
     tg.close();
   };
-  return /*#__PURE__*/_jsxs("div", {
-    className: "min-h-screen p-4 md:p-8 flex flex-col items-center",
-    children: [/*#__PURE__*/_jsxs("header", {
-      className: "w-full max-w-7xl flex flex-col md:flex-row justify-between items-center mb-8 border-b border-brand-500/20 pb-5 gap-4",
-      children: [/*#__PURE__*/_jsxs("div", {
-        className: "flex items-center gap-3",
-        children: [/*#__PURE__*/_jsx("div", {
-          className: "w-12 h-12 rounded-2xl bg-gradient-to-tr from-brand-600 to-emerald-400 flex items-center justify-center text-black font-black text-2xl",
-          children: "K"
-        }), /*#__PURE__*/_jsxs("div", {
-          children: [/*#__PURE__*/_jsxs("h1", {
-            className: "text-2xl md:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2",
-            children: [t.title, /*#__PURE__*/_jsx("span", {
-              className: "px-2.5 py-0.5 text-xs bg-brand-500/10 border border-brand-500/40 text-brand-400 rounded-full font-semibold",
-              children: "1K • 2K • 4K"
-            })]
-          }), /*#__PURE__*/_jsx("p", {
-            className: "text-gray-400 text-xs md:text-sm font-medium",
-            children: t.subtitle
-          })]
-        })]
-      }), /*#__PURE__*/_jsxs("div", {
-        className: "flex items-center gap-3",
-        children: [/*#__PURE__*/_jsxs("span", {
-          className: "text-xs text-gray-400 bg-gray-900 border border-gray-800 px-3 py-1.5 rounded-lg hidden sm:inline-block",
-          children: ["📁 ", savedIcons.length, " Assets"]
-        }), /*#__PURE__*/_jsxs("button", {
-          onClick: toggleLang,
-          className: "px-4 py-2 text-xs md:text-sm font-bold rounded-xl bg-gray-900 border border-brand-500/50 hover:bg-brand-500 hover:text-black text-brand-400 transition-all",
-          children: ["🌐 ", t.langToggle]
-        })]
-      })]
-    }), /*#__PURE__*/_jsxs("div", {
-      className: "w-full max-w-7xl grid grid-cols-1 lg:grid-cols-12 gap-8",
-      children: [/*#__PURE__*/_jsx("div", {
-        className: "lg:col-span-5 flex flex-col gap-6",
-        children: /*#__PURE__*/_jsxs("div", {
-          className: "glass-panel p-6 rounded-2xl flex flex-col gap-5",
-          children: [/*#__PURE__*/_jsxs("div", {
-            children: [/*#__PURE__*/_jsxs("div", {
-              className: "flex justify-between items-center mb-2",
-              children: [/*#__PURE__*/_jsx("label", {
-                className: "text-xs md:text-sm font-bold text-brand-400 tracking-wide flex items-center gap-2",
-                children: "🔑 Gemini API Key"
-              }), /*#__PURE__*/_jsx("span", {
-                className: "text-[10px] text-emerald-400 font-semibold",
-                children: "Tersimpan di browser"
-              })]
-            }), /*#__PURE__*/_jsx("input", {
-              id: "gemini-key-input",
-              type: "password",
-              className: "w-full p-3 border border-brand-500/30 focus:border-brand-500 rounded-xl focus:ring-2 focus:ring-brand-500/20 outline-none text-sm text-white bg-black/80 placeholder-gray-600 font-mono transition-all mb-3",
-              placeholder: "Opsional: Gemini API Key (kosongkan = pakai Pollinations gratis)",
-              defaultValue: localStorage.getItem('kasanstock_gemini_key') || '',
-              onBlur: e => {
-                const v = (e.target.value || '').trim();
-                if (v) localStorage.setItem('kasanstock_gemini_key', v);
-              }
-            }), /*#__PURE__*/_jsx("input", {
-              id: "gemini-model-input",
-              type: "text",
-              className: "w-full p-2.5 mt-2 border border-brand-500/30 focus:border-brand-500 rounded-xl focus:ring-2 focus:ring-brand-500/20 outline-none text-xs text-white bg-black/80 placeholder-gray-600 font-mono transition-all",
-              placeholder: "Model (default: gemini-2.5-flash-image)",
-              defaultValue: localStorage.getItem('kasanstock_gemini_model') || 'gemini-2.5-flash-image',
-              onBlur: e => {
-                const v = (e.target.value || '').trim();
-                if (v) localStorage.setItem('kasanstock_gemini_model', v);
-              }
-            })]
-          }), /*#__PURE__*/_jsxs("div", {
-            children: [/*#__PURE__*/_jsx("div", {
-              className: "flex justify-between items-center mb-2",
-              children: /*#__PURE__*/_jsxs("label", {
-                className: "text-xs md:text-sm font-bold text-brand-400 tracking-wide flex items-center gap-2",
-                children: ["✍️ ", t.promptsLabel]
-              })
-            }), /*#__PURE__*/_jsx("textarea", {
-              className: "w-full p-4 border border-brand-500/30 focus:border-brand-500 rounded-xl focus:ring-2 focus:ring-brand-500/20 outline-none resize-y min-h-[120px] text-sm text-white bg-black/80 placeholder-gray-600 font-mono transition-all",
-              placeholder: t.promptsPlaceholder,
-              value: promptsText,
-              onChange: e => setPromptsText(e.target.value),
-              disabled: isGenerating
-            }), /*#__PURE__*/_jsxs("div", {
-              className: "mt-3",
-              children: [/*#__PURE__*/_jsx("span", {
-                className: "text-[11px] text-gray-400 font-medium block mb-1.5",
-                children: t.presetLabel
-              }), /*#__PURE__*/_jsx("div", {
-                className: "flex flex-wrap gap-1.5",
-                children: t.presets.map((p, idx) => /*#__PURE__*/_jsxs("button", {
-                  type: "button",
-                  onClick: () => addPresetPrompt(p),
-                  disabled: isGenerating,
-                  className: "text-[11px] bg-gray-900/80 hover:bg-brand-500/20 text-gray-300 hover:text-brand-400 border border-gray-800 hover:border-brand-500/40 px-2.5 py-1 rounded-lg transition-colors",
-                  children: ["+ ", p]
-                }, idx))
-              })]
-            })]
-          }), /*#__PURE__*/_jsxs("div", {
-            children: [/*#__PURE__*/_jsxs("label", {
-              className: "block text-xs md:text-sm font-bold text-brand-400 mb-2",
-              children: ["💎 ", t.qualityLabel]
-            }), /*#__PURE__*/_jsx("div", {
-              className: "grid grid-cols-3 gap-2",
-              children: Object.entries(t.qualities).map(([key, item]) => /*#__PURE__*/_jsxs("button", {
-                onClick: () => setQuality(key),
-                disabled: isGenerating,
-                className: `p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between ${quality === key ? 'border-brand-500 bg-brand-500/20 text-white ring-2 ring-brand-500/40' : 'border-gray-800 bg-black/50 text-gray-400 hover:border-brand-500/40'}`,
-                children: [/*#__PURE__*/_jsx("div", {
-                  className: "flex items-center justify-between w-full mb-1",
-                  children: /*#__PURE__*/_jsx("span", {
-                    className: "text-xs font-black uppercase tracking-wider",
-                    children: item.label
-                  })
-                }), /*#__PURE__*/_jsx("span", {
-                  className: "text-[10px] text-brand-400 font-mono font-bold block",
-                  children: item.res
-                }), /*#__PURE__*/_jsx("span", {
-                  className: "text-[9px] text-gray-500 truncate block mt-0.5",
-                  children: item.desc
-                })]
-              }, key))
-            })]
-          }), /*#__PURE__*/_jsxs("div", {
-            children: [/*#__PURE__*/_jsxs("label", {
-              className: "block text-xs md:text-sm font-bold text-brand-400 mb-2",
-              children: ["📐 ", t.typeLabel]
-            }), /*#__PURE__*/_jsxs("div", {
-              className: "grid grid-cols-2 gap-2 p-1 bg-black/60 border border-gray-800 rounded-xl",
-              children: [/*#__PURE__*/_jsx("button", {
-                onClick: () => setType('single'),
-                disabled: isGenerating,
-                className: `py-2 text-xs font-bold rounded-lg transition-all ${type === 'single' ? 'bg-brand-500 text-black shadow-md' : 'text-gray-400 hover:text-brand-400'}`,
-                children: t.typeSingle
-              }), /*#__PURE__*/_jsx("button", {
-                onClick: () => setType('set'),
-                disabled: isGenerating,
-                className: `py-2 text-xs font-bold rounded-lg transition-all ${type === 'set' ? 'bg-brand-500 text-black shadow-md' : 'text-gray-400 hover:text-brand-400'}`,
-                children: t.typeSet
-              })]
-            })]
-          }), /*#__PURE__*/_jsxs("div", {
-            children: [/*#__PURE__*/_jsxs("label", {
-              className: "block text-xs md:text-sm font-bold text-brand-400 mb-2",
-              children: ["🎨 ", t.styleLabel]
-            }), /*#__PURE__*/_jsx("div", {
-              className: "grid grid-cols-1 gap-2 max-h-[190px] overflow-y-auto pr-1",
-              children: Object.entries(t.styles).map(([key, label]) => /*#__PURE__*/_jsxs("label", {
-                className: `flex items-center p-2 rounded-xl border cursor-pointer transition-all ${style === key ? 'border-brand-500 bg-brand-500/10 text-white' : 'border-gray-800/80 hover:border-brand-500/40 bg-gray-900/40 text-gray-400'}`,
-                children: [/*#__PURE__*/_jsx("input", {
-                  type: "radio",
-                  name: "style",
-                  value: key,
-                  checked: style === key,
-                  onChange: () => setStyle(key),
-                  disabled: isGenerating,
-                  className: "w-4 h-4 text-brand-500"
-                }), /*#__PURE__*/_jsx("span", {
-                  className: "ml-3 text-xs font-medium",
-                  children: label
-                })]
-              }, key))
-            })]
-          }), /*#__PURE__*/_jsxs("div", {
-            className: "flex items-center justify-between p-3 bg-black/60 border border-brand-500/30 rounded-xl",
-            children: [/*#__PURE__*/_jsxs("div", {
-              className: "flex flex-col",
-              children: [/*#__PURE__*/_jsxs("span", {
-                className: "text-xs font-bold text-white flex items-center gap-1.5",
-                children: ["⚡️ ", t.autoDownloadLabel]
-              }), /*#__PURE__*/_jsx("span", {
-                className: "text-[10px] text-gray-400",
-                children: t.autoDownloadDesc
-              })]
-            }), /*#__PURE__*/_jsxs("label", {
-              className: "relative inline-flex items-center cursor-pointer",
-              children: [/*#__PURE__*/_jsx("input", {
-                type: "checkbox",
-                checked: autoDownload,
-                onChange: e => setAutoDownload(e.target.checked),
-                className: "sr-only peer",
-                disabled: isGenerating
-              }), /*#__PURE__*/_jsx("div", {
-                className: "w-9 h-5 bg-gray-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand-500"
-              })]
-            })]
-          }), /*#__PURE__*/_jsx("button", {
-            onClick: () => handleGenerate(),
-            disabled: isGenerating || !promptsText.trim(),
-            className: `w-full py-4 rounded-xl font-bold text-sm md:text-base transition-all flex items-center justify-center gap-2 ${isGenerating || !promptsText.trim() ? 'bg-gray-900 text-gray-600 border border-gray-800 cursor-not-allowed' : 'bg-brand-500 text-black hover:bg-brand-400 shadow-[0_0_20px_rgba(34,197,94,0.4)]'}`,
-            children: isGenerating ? /*#__PURE__*/_jsx(_Fragment, {
-              children: /*#__PURE__*/_jsxs("span", {
-                children: [t.generatingBtn, " (", currentProgress.current, "/", currentProgress.total, ")..."]
-              })
-            }) : /*#__PURE__*/_jsxs(_Fragment, {
-              children: [/*#__PURE__*/_jsx("span", {
-                children: "⚡️"
-              }), " ", /*#__PURE__*/_jsxs("span", {
-                children: [t.generateBtn, " (", quality.toUpperCase(), ")"]
-              })]
-            })
-          }), isGenerating && /*#__PURE__*/_jsxs("div", {
-            className: "bg-black/60 border border-brand-500/30 p-3 rounded-xl",
-            children: [/*#__PURE__*/_jsx("div", {
-              className: "flex justify-between text-xs text-brand-400 mb-1 font-semibold",
-              children: /*#__PURE__*/_jsxs("span", {
-                children: [t.progressText, " ", currentProgress.current, " ", t.dari, " ", currentProgress.total]
-              })
-            }), /*#__PURE__*/_jsx("div", {
-              className: "w-full bg-gray-900 h-2 rounded-full overflow-hidden",
-              children: /*#__PURE__*/_jsx("div", {
-                className: "bg-brand-500 h-full transition-all duration-300",
-                style: {
-                  width: `${currentProgress.current / currentProgress.total * 100}%`
-                }
-              })
-            }), /*#__PURE__*/_jsxs("p", {
-              className: "text-[11px] text-gray-400 mt-2 truncate font-mono",
-              children: ["▶️ ", currentProgress.currentPrompt]
-            })]
-          }), genError && /*#__PURE__*/_jsxs("div", {
-            className: "bg-red-950/60 border border-red-500/50 p-3 rounded-xl text-xs text-red-300 font-mono break-words",
-            children: ["⚠️ ", genError]
-          })]
-        })
-      }), /*#__PURE__*/_jsxs("div", {
-        className: "lg:col-span-7 flex flex-col gap-6",
-        children: [activeIcon && /*#__PURE__*/_jsxs("div", {
-          className: "glass-panel p-6 rounded-2xl flex flex-col md:flex-row gap-6 items-center",
-          children: [/*#__PURE__*/_jsxs("div", {
-            className: "flex-shrink-0 flex flex-col items-center",
-            children: [/*#__PURE__*/_jsx("div", {
-              className: `w-52 h-52 rounded-2xl border border-gray-700/80 p-2 flex items-center justify-center transition-all ${bgPreview === 'white' ? 'bg-white' : bgPreview === 'dark' ? 'bg-neutral-900' : bgPreview === 'grid' ? 'checkerboard-bg' : 'bg-brand-950'}`,
-              children: /*#__PURE__*/_jsx("img", {
-                src: activeIcon.url,
-                alt: activeIcon.prompt,
-                className: "w-full h-full object-contain drop-shadow-md rounded-lg"
-              })
-            }), /*#__PURE__*/_jsxs("div", {
-              className: "flex gap-1.5 mt-3 bg-black/60 p-1 rounded-xl border border-gray-800",
-              children: [/*#__PURE__*/_jsx("button", {
-                onClick: () => setBgPreview('white'),
-                className: `w-6 h-6 rounded-lg border border-gray-400 bg-white ${bgPreview === 'white' ? 'ring-2 ring-brand-500' : ''}`
-              }), /*#__PURE__*/_jsx("button", {
-                onClick: () => setBgPreview('dark'),
-                className: `w-6 h-6 rounded-lg border border-gray-700 bg-neutral-900 ${bgPreview === 'dark' ? 'ring-2 ring-brand-500' : ''}`
-              }), /*#__PURE__*/_jsx("button", {
-                onClick: () => setBgPreview('grid'),
-                className: `w-6 h-6 rounded-lg border border-gray-700 checkerboard-bg ${bgPreview === 'grid' ? 'ring-2 ring-brand-500' : ''}`
-              }), /*#__PURE__*/_jsx("button", {
-                onClick: () => setBgPreview('green'),
-                className: `w-6 h-6 rounded-lg border border-gray-700 bg-brand-950 ${bgPreview === 'green' ? 'ring-2 ring-brand-500' : ''}`
-              })]
-            })]
-          }), /*#__PURE__*/_jsxs("div", {
-            className: "flex-1 flex flex-col justify-between h-full w-full",
-            children: [/*#__PURE__*/_jsxs("div", {
-              children: [/*#__PURE__*/_jsxs("div", {
-                className: "flex flex-wrap items-center gap-1.5 mb-2",
-                children: [/*#__PURE__*/_jsxs("span", {
-                  className: "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-brand-500/20 text-brand-400 border border-brand-500/30",
-                  children: [activeIcon.quality ? activeIcon.quality.toUpperCase() : '2K', " (", qualityPixelMap[activeIcon.quality || '2k'], "px)"]
-                }), /*#__PURE__*/_jsx("span", {
-                  className: "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-gray-800 text-gray-300",
-                  children: activeIcon.style
-                }), /*#__PURE__*/_jsx("span", {
-                  className: "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-gray-800 text-gray-300",
-                  children: activeIcon.type
-                })]
-              }), /*#__PURE__*/_jsx("h3", {
-                className: "text-base md:text-lg font-bold text-white capitalize line-clamp-2",
-                children: activeIcon.prompt
-              })]
-            }), /*#__PURE__*/_jsxs("div", {
-              className: "flex flex-wrap gap-2 mt-4",
-              children: [/*#__PURE__*/_jsxs("button", {
-                onClick: () => downloadImage(activeIcon),
-                className: "px-4 py-2.5 bg-brand-500 hover:bg-brand-400 text-black text-xs font-bold rounded-xl flex items-center gap-2",
-                children: ["⬇️ ", t.download, " (", (activeIcon.quality || '2k').toUpperCase(), ")"]
-              }), /*#__PURE__*/_jsx("button", {
-                onClick: () => setModalIcon(activeIcon),
-                className: "px-3.5 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5",
-                children: "🪄 Refine / Edit"
-              }), /*#__PURE__*/_jsx("button", {
-                onClick: () => copyToClipboard(activeIcon.prompt, activeIcon.id),
-                className: "px-3 py-2.5 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs font-semibold rounded-xl border border-gray-800",
-                children: copiedId === activeIcon.id ? t.copied : t.copyPrompt
-              })]
-            })]
-          })]
-        }), /*#__PURE__*/_jsxs("div", {
-          className: "glass-panel p-6 rounded-2xl flex flex-col gap-4",
-          children: [/*#__PURE__*/_jsxs("div", {
-            className: "flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-gray-800",
-            children: [/*#__PURE__*/_jsxs("h2", {
-              className: "text-lg font-bold text-white flex items-center gap-2",
-              children: ["📦 ", t.collectionTitle, " ", /*#__PURE__*/_jsx("span", {
-                className: "text-xs font-semibold bg-brand-500/10 text-brand-400 px-2 py-0.5 rounded-full border border-brand-500/30",
-                children: filteredIcons.length
-              })]
-            }), /*#__PURE__*/_jsx("div", {
-              className: "flex flex-wrap items-center gap-2",
-              children: savedIcons.length > 0 && /*#__PURE__*/_jsxs(_Fragment, {
-                children: [/*#__PURE__*/_jsxs("button", {
-                  onClick: handleDownloadZip,
-                  className: "px-3 py-1.5 bg-brand-500/20 hover:bg-brand-500/30 text-brand-400 border border-brand-500/40 text-xs font-bold rounded-xl",
-                  children: ["📦 ", t.downloadZip]
-                }), /*#__PURE__*/_jsxs("button", {
-                  onClick: handleClearAll,
-                  className: "px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold rounded-xl",
-                  children: ["🗑 ", t.clearAll]
-                })]
-              })
-            })]
-          }), savedIcons.length > 0 && /*#__PURE__*/_jsxs("div", {
-            className: "flex flex-col sm:flex-row gap-2",
-            children: [/*#__PURE__*/_jsx("input", {
-              type: "text",
-              placeholder: t.searchPlaceholder,
-              value: searchQuery,
-              onChange: e => setSearchQuery(e.target.value),
-              className: "flex-1 bg-black/60 border border-gray-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand-500"
-            }), /*#__PURE__*/_jsxs("select", {
-              value: selectedFilterStyle,
-              onChange: e => setSelectedFilterStyle(e.target.value),
-              className: "bg-black/60 border border-gray-800 rounded-xl px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-brand-500",
-              children: [/*#__PURE__*/_jsx("option", {
-                value: "all",
-                children: t.allStyles
-              }), Object.keys(t.styles).map(st => /*#__PURE__*/_jsx("option", {
-                value: st,
-                children: st.toUpperCase()
-              }, st))]
-            })]
-          }), filteredIcons.length === 0 ? /*#__PURE__*/_jsxs("div", {
-            className: "py-12 text-center text-gray-500 text-xs flex flex-col items-center gap-2",
-            children: [/*#__PURE__*/_jsx("span", {
-              className: "text-3xl",
-              children: "✨"
-            }), /*#__PURE__*/_jsx("p", {
-              children: t.emptyCollection
-            })]
-          }) : /*#__PURE__*/_jsx("div", {
-            className: "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[460px] overflow-y-auto pr-1",
-            children: filteredIcons.map(icon => /*#__PURE__*/_jsxs("div", {
-              onClick: () => setActiveIcon(icon),
-              className: `glass-card p-2.5 rounded-xl cursor-pointer group relative flex flex-col justify-between ${activeIcon?.id === icon.id ? 'ring-2 ring-brand-500 bg-brand-500/10' : ''}`,
-              children: [/*#__PURE__*/_jsxs("div", {
-                className: "w-full aspect-square bg-white rounded-lg p-2 flex items-center justify-center overflow-hidden mb-2 relative",
-                children: [/*#__PURE__*/_jsx("img", {
-                  src: icon.url,
-                  alt: icon.prompt,
-                  className: "w-full h-full object-contain group-hover:scale-105 transition-transform"
-                }), /*#__PURE__*/_jsx("span", {
-                  className: "absolute top-1 left-1 bg-black/70 text-brand-400 text-[8px] font-bold px-1.5 py-0.5 rounded",
-                  children: (icon.quality || '2k').toUpperCase()
-                })]
-              }), /*#__PURE__*/_jsx("p", {
-                className: "text-[11px] text-gray-300 font-medium truncate capitalize mb-1",
-                children: icon.prompt
-              }), /*#__PURE__*/_jsxs("div", {
-                className: "flex justify-between items-center text-[9px] text-gray-500",
-                children: [/*#__PURE__*/_jsx("span", {
-                  className: "bg-gray-800 text-gray-300 px-1.5 py-0.5 rounded font-mono uppercase",
-                  children: icon.style
-                }), /*#__PURE__*/_jsxs("div", {
-                  className: "flex gap-1",
-                  children: [/*#__PURE__*/_jsx("button", {
-                    onClick: e => {
-                      e.stopPropagation();
-                      downloadImage(icon);
-                    },
-                    className: "p-1 hover:bg-brand-500 hover:text-black rounded text-gray-400",
-                    children: "⬇️"
-                  }), /*#__PURE__*/_jsx("button", {
-                    onClick: e => handleDelete(icon.id, e),
-                    className: "p-1 hover:bg-red-500/20 hover:text-red-400 rounded text-gray-400",
-                    children: "🗑"
-                  })]
-                })]
-              })]
-            }, icon.id))
-          })]
-        })]
-      })]
-    }), activeIcon && /*#__PURE__*/_jsxs("div", {
-      className: "w-full max-w-7xl mt-6 flex gap-3",
-      children: [/*#__PURE__*/_jsx("button", {
-        onClick: sendToBot,
-        className: "flex-1 py-4 bg-emerald-500 text-black font-bold rounded-2xl text-lg",
-        children: "Kirim ke Bot"
-      }), /*#__PURE__*/_jsx("button", {
-        onClick: () => tg.close(),
-        className: "flex-1 py-4 bg-gray-800 rounded-2xl text-lg",
-        children: "Tutup App"
-      })]
-    }), modalIcon && /*#__PURE__*/_jsx("div", {
-      className: "fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4",
-      children: /*#__PURE__*/_jsxs("div", {
-        className: "glass-panel p-6 rounded-2xl max-w-md w-full border border-brand-500/40",
-        children: [/*#__PURE__*/_jsxs("div", {
-          className: "flex justify-between items-center mb-4",
-          children: [/*#__PURE__*/_jsxs("h3", {
-            className: "text-base font-bold text-white flex items-center gap-2",
-            children: ["🪄 ", t.refineTitle]
-          }), /*#__PURE__*/_jsx("button", {
-            onClick: () => setModalIcon(null),
-            className: "text-gray-400 hover:text-white text-lg font-bold",
-            children: "✕"
-          })]
-        }), /*#__PURE__*/_jsx("div", {
-          className: "w-32 h-32 bg-white rounded-xl p-2 mx-auto mb-4 border border-gray-700",
-          children: /*#__PURE__*/_jsx("img", {
-            src: modalIcon.url,
-            alt: "Current",
-            className: "w-full h-full object-contain"
-          })
-        }), /*#__PURE__*/_jsxs("p", {
-          className: "text-xs text-gray-400 mb-2 font-mono",
-          children: ["Original: \"", modalIcon.prompt, "\""]
-        }), /*#__PURE__*/_jsx("input", {
-          type: "text",
-          placeholder: t.refinePlaceholder,
-          value: refineText,
-          onChange: e => setRefineText(e.target.value),
-          className: "w-full p-3 bg-black/80 border border-brand-500/40 rounded-xl text-xs text-white mb-4 outline-none focus:border-brand-500"
-        }), /*#__PURE__*/_jsxs("div", {
-          className: "flex gap-2",
-          children: [/*#__PURE__*/_jsx("button", {
-            onClick: () => setModalIcon(null),
-            className: "flex-1 py-2.5 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs font-bold rounded-xl",
-            children: "Batal"
-          }), /*#__PURE__*/_jsx("button", {
-            onClick: handleRefine,
-            className: "flex-1 py-2.5 bg-brand-500 hover:bg-brand-400 text-black text-xs font-bold rounded-xl",
-            children: t.refineBtn
-          })]
-        })]
-      })
-    })]
-  });
+  return /*#__PURE__*/React.createElement("div", {
+    className: "min-h-screen p-4 md:p-8 flex flex-col items-center"
+  }, /*#__PURE__*/React.createElement("header", {
+    className: "w-full max-w-7xl flex flex-col md:flex-row justify-between items-center mb-8 border-b border-brand-500/20 pb-5 gap-4"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-3"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "w-12 h-12 rounded-2xl bg-gradient-to-tr from-brand-600 to-emerald-400 flex items-center justify-center text-black font-black text-2xl"
+  }, "K"), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", {
+    className: "text-2xl md:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2"
+  }, t.title, /*#__PURE__*/React.createElement("span", {
+    className: "px-2.5 py-0.5 text-xs bg-brand-500/10 border border-brand-500/40 text-brand-400 rounded-full font-semibold"
+  }, "1K • 2K • 4K")), /*#__PURE__*/React.createElement("p", {
+    className: "text-gray-400 text-xs md:text-sm font-medium"
+  }, t.subtitle))), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-3"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "text-xs text-gray-400 bg-gray-900 border border-gray-800 px-3 py-1.5 rounded-lg hidden sm:inline-block"
+  }, "📁 ", savedIcons.length, " Assets"), /*#__PURE__*/React.createElement("button", {
+    onClick: toggleLang,
+    className: "px-4 py-2 text-xs md:text-sm font-bold rounded-xl bg-gray-900 border border-brand-500/50 hover:bg-brand-500 hover:text-black text-brand-400 transition-all"
+  }, "🌐 ", t.langToggle))), /*#__PURE__*/React.createElement("div", {
+    className: "w-full max-w-7xl grid grid-cols-1 lg:grid-cols-12 gap-8"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "lg:col-span-5 flex flex-col gap-6"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "glass-panel p-6 rounded-2xl flex flex-col gap-5"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "flex justify-between items-center mb-2"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "text-xs md:text-sm font-bold text-brand-400 tracking-wide flex items-center gap-2"
+  }, "🔑 Gemini API Key"), /*#__PURE__*/React.createElement("span", {
+    className: "text-[10px] text-emerald-400 font-semibold"
+  }, "Tersimpan di browser")), /*#__PURE__*/React.createElement("input", {
+    id: "gemini-key-input",
+    type: "password",
+    className: "w-full p-3 border border-brand-500/30 focus:border-brand-500 rounded-xl focus:ring-2 focus:ring-brand-500/20 outline-none text-sm text-white bg-black/80 placeholder-gray-600 font-mono transition-all mb-3",
+    placeholder: "Paste Gemini API Key di sini (disimpan otomatis)",
+    defaultValue: localStorage.getItem('kasanstock_gemini_key') || '',
+    onBlur: e => {
+      const v = (e.target.value || '').trim();
+      if (v) localStorage.setItem('kasanstock_gemini_key', v);
+    }
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "flex justify-between items-center mb-2"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "text-xs md:text-sm font-bold text-brand-400 tracking-wide flex items-center gap-2"
+  }, "✍️ ", t.promptsLabel)), /*#__PURE__*/React.createElement("textarea", {
+    className: "w-full p-4 border border-brand-500/30 focus:border-brand-500 rounded-xl focus:ring-2 focus:ring-brand-500/20 outline-none resize-y min-h-[120px] text-sm text-white bg-black/80 placeholder-gray-600 font-mono transition-all",
+    placeholder: t.promptsPlaceholder,
+    value: promptsText,
+    onChange: e => setPromptsText(e.target.value),
+    disabled: isGenerating
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "mt-3"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "text-[11px] text-gray-400 font-medium block mb-1.5"
+  }, t.presetLabel), /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-wrap gap-1.5"
+  }, t.presets.map((p, idx) => /*#__PURE__*/React.createElement("button", {
+    key: idx,
+    type: "button",
+    onClick: () => addPresetPrompt(p),
+    disabled: isGenerating,
+    className: "text-[11px] bg-gray-900/80 hover:bg-brand-500/20 text-gray-300 hover:text-brand-400 border border-gray-800 hover:border-brand-500/40 px-2.5 py-1 rounded-lg transition-colors"
+  }, "+ ", p))))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block text-xs md:text-sm font-bold text-brand-400 mb-2"
+  }, "💎 ", t.qualityLabel), /*#__PURE__*/React.createElement("div", {
+    className: "grid grid-cols-3 gap-2"
+  }, Object.entries(t.qualities).map(([key, item]) => /*#__PURE__*/React.createElement("button", {
+    key: key,
+    onClick: () => setQuality(key),
+    disabled: isGenerating,
+    className: `p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between ${quality === key ? 'border-brand-500 bg-brand-500/20 text-white ring-2 ring-brand-500/40' : 'border-gray-800 bg-black/50 text-gray-400 hover:border-brand-500/40'}`
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center justify-between w-full mb-1"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "text-xs font-black uppercase tracking-wider"
+  }, item.label)), /*#__PURE__*/React.createElement("span", {
+    className: "text-[10px] text-brand-400 font-mono font-bold block"
+  }, item.res), /*#__PURE__*/React.createElement("span", {
+    className: "text-[9px] text-gray-500 truncate block mt-0.5"
+  }, item.desc))))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block text-xs md:text-sm font-bold text-brand-400 mb-2"
+  }, "📐 ", t.typeLabel), /*#__PURE__*/React.createElement("div", {
+    className: "grid grid-cols-2 gap-2 p-1 bg-black/60 border border-gray-800 rounded-xl"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setType('single'),
+    disabled: isGenerating,
+    className: `py-2 text-xs font-bold rounded-lg transition-all ${type === 'single' ? 'bg-brand-500 text-black shadow-md' : 'text-gray-400 hover:text-brand-400'}`
+  }, t.typeSingle), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setType('set'),
+    disabled: isGenerating,
+    className: `py-2 text-xs font-bold rounded-lg transition-all ${type === 'set' ? 'bg-brand-500 text-black shadow-md' : 'text-gray-400 hover:text-brand-400'}`
+  }, t.typeSet))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block text-xs md:text-sm font-bold text-brand-400 mb-2"
+  }, "🎨 ", t.styleLabel), /*#__PURE__*/React.createElement("div", {
+    className: "grid grid-cols-1 gap-2 max-h-[190px] overflow-y-auto pr-1"
+  }, Object.entries(t.styles).map(([key, label]) => /*#__PURE__*/React.createElement("label", {
+    key: key,
+    className: `flex items-center p-2 rounded-xl border cursor-pointer transition-all ${style === key ? 'border-brand-500 bg-brand-500/10 text-white' : 'border-gray-800/80 hover:border-brand-500/40 bg-gray-900/40 text-gray-400'}`
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "radio",
+    name: "style",
+    value: key,
+    checked: style === key,
+    onChange: () => setStyle(key),
+    disabled: isGenerating,
+    className: "w-4 h-4 text-brand-500"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "ml-3 text-xs font-medium"
+  }, label))))), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center justify-between p-3 bg-black/60 border border-brand-500/30 rounded-xl"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-col"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "text-xs font-bold text-white flex items-center gap-1.5"
+  }, "⚡️ ", t.autoDownloadLabel), /*#__PURE__*/React.createElement("span", {
+    className: "text-[10px] text-gray-400"
+  }, t.autoDownloadDesc)), /*#__PURE__*/React.createElement("label", {
+    className: "relative inline-flex items-center cursor-pointer"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: autoDownload,
+    onChange: e => setAutoDownload(e.target.checked),
+    className: "sr-only peer",
+    disabled: isGenerating
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "w-9 h-5 bg-gray-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand-500"
+  }))), /*#__PURE__*/React.createElement("button", {
+    onClick: () => handleGenerate(),
+    disabled: isGenerating || !promptsText.trim(),
+    className: `w-full py-4 rounded-xl font-bold text-sm md:text-base transition-all flex items-center justify-center gap-2 ${isGenerating || !promptsText.trim() ? 'bg-gray-900 text-gray-600 border border-gray-800 cursor-not-allowed' : 'bg-brand-500 text-black hover:bg-brand-400 shadow-[0_0_20px_rgba(34,197,94,0.4)]'}`
+  }, isGenerating ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, t.generatingBtn, " (", currentProgress.current, "/", currentProgress.total, ")...")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "⚡️"), " ", /*#__PURE__*/React.createElement("span", null, t.generateBtn, " (", quality.toUpperCase(), ")"))), isGenerating && /*#__PURE__*/React.createElement("div", {
+    className: "bg-black/60 border border-brand-500/30 p-3 rounded-xl"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex justify-between text-xs text-brand-400 mb-1 font-semibold"
+  }, /*#__PURE__*/React.createElement("span", null, t.progressText, " ", currentProgress.current, " ", t.dari, " ", currentProgress.total)), /*#__PURE__*/React.createElement("div", {
+    className: "w-full bg-gray-900 h-2 rounded-full overflow-hidden"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "bg-brand-500 h-full transition-all duration-300",
+    style: {
+      width: `${currentProgress.current / currentProgress.total * 100}%`
+    }
+  })), /*#__PURE__*/React.createElement("p", {
+    className: "text-[11px] text-gray-400 mt-2 truncate font-mono"
+  }, "▶️ ", currentProgress.currentPrompt)))), /*#__PURE__*/React.createElement("div", {
+    className: "lg:col-span-7 flex flex-col gap-6"
+  }, activeIcon && /*#__PURE__*/React.createElement("div", {
+    className: "glass-panel p-6 rounded-2xl flex flex-col md:flex-row gap-6 items-center"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex-shrink-0 flex flex-col items-center"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: `w-52 h-52 rounded-2xl border border-gray-700/80 p-2 flex items-center justify-center transition-all ${bgPreview === 'white' ? 'bg-white' : bgPreview === 'dark' ? 'bg-neutral-900' : bgPreview === 'grid' ? 'checkerboard-bg' : 'bg-brand-950'}`
+  }, /*#__PURE__*/React.createElement("img", {
+    src: activeIcon.url,
+    alt: activeIcon.prompt,
+    className: "w-full h-full object-contain drop-shadow-md rounded-lg"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-1.5 mt-3 bg-black/60 p-1 rounded-xl border border-gray-800"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setBgPreview('white'),
+    className: `w-6 h-6 rounded-lg border border-gray-400 bg-white ${bgPreview === 'white' ? 'ring-2 ring-brand-500' : ''}`
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setBgPreview('dark'),
+    className: `w-6 h-6 rounded-lg border border-gray-700 bg-neutral-900 ${bgPreview === 'dark' ? 'ring-2 ring-brand-500' : ''}`
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setBgPreview('grid'),
+    className: `w-6 h-6 rounded-lg border border-gray-700 checkerboard-bg ${bgPreview === 'grid' ? 'ring-2 ring-brand-500' : ''}`
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setBgPreview('green'),
+    className: `w-6 h-6 rounded-lg border border-gray-700 bg-brand-950 ${bgPreview === 'green' ? 'ring-2 ring-brand-500' : ''}`
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "flex-1 flex flex-col justify-between h-full w-full"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-wrap items-center gap-1.5 mb-2"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-brand-500/20 text-brand-400 border border-brand-500/30"
+  }, activeIcon.quality ? activeIcon.quality.toUpperCase() : '2K', " (", qualityPixelMap[activeIcon.quality || '2k'], "px)"), /*#__PURE__*/React.createElement("span", {
+    className: "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-gray-800 text-gray-300"
+  }, activeIcon.style), /*#__PURE__*/React.createElement("span", {
+    className: "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-gray-800 text-gray-300"
+  }, activeIcon.type)), /*#__PURE__*/React.createElement("h3", {
+    className: "text-base md:text-lg font-bold text-white capitalize line-clamp-2"
+  }, activeIcon.prompt)), /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-wrap gap-2 mt-4"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => downloadImage(activeIcon),
+    className: "px-4 py-2.5 bg-brand-500 hover:bg-brand-400 text-black text-xs font-bold rounded-xl flex items-center gap-2"
+  }, "⬇️ ", t.download, " (", (activeIcon.quality || '2k').toUpperCase(), ")"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setModalIcon(activeIcon),
+    className: "px-3.5 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5"
+  }, "🪄 Refine / Edit"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => copyToClipboard(activeIcon.prompt, activeIcon.id),
+    className: "px-3 py-2.5 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs font-semibold rounded-xl border border-gray-800"
+  }, copiedId === activeIcon.id ? t.copied : t.copyPrompt)))), /*#__PURE__*/React.createElement("div", {
+    className: "glass-panel p-6 rounded-2xl flex flex-col gap-4"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-gray-800"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "text-lg font-bold text-white flex items-center gap-2"
+  }, "📦 ", t.collectionTitle, " ", /*#__PURE__*/React.createElement("span", {
+    className: "text-xs font-semibold bg-brand-500/10 text-brand-400 px-2 py-0.5 rounded-full border border-brand-500/30"
+  }, filteredIcons.length)), /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-wrap items-center gap-2"
+  }, savedIcons.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    onClick: handleDownloadZip,
+    className: "px-3 py-1.5 bg-brand-500/20 hover:bg-brand-500/30 text-brand-400 border border-brand-500/40 text-xs font-bold rounded-xl"
+  }, "📦 ", t.downloadZip), /*#__PURE__*/React.createElement("button", {
+    onClick: handleClearAll,
+    className: "px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold rounded-xl"
+  }, "🗑 ", t.clearAll)))), savedIcons.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-col sm:flex-row gap-2"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "text",
+    placeholder: t.searchPlaceholder,
+    value: searchQuery,
+    onChange: e => setSearchQuery(e.target.value),
+    className: "flex-1 bg-black/60 border border-gray-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand-500"
+  }), /*#__PURE__*/React.createElement("select", {
+    value: selectedFilterStyle,
+    onChange: e => setSelectedFilterStyle(e.target.value),
+    className: "bg-black/60 border border-gray-800 rounded-xl px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-brand-500"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "all"
+  }, t.allStyles), Object.keys(t.styles).map(st => /*#__PURE__*/React.createElement("option", {
+    key: st,
+    value: st
+  }, st.toUpperCase())))), filteredIcons.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "py-12 text-center text-gray-500 text-xs flex flex-col items-center gap-2"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "text-3xl"
+  }, "✨"), /*#__PURE__*/React.createElement("p", null, t.emptyCollection)) : /*#__PURE__*/React.createElement("div", {
+    className: "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[460px] overflow-y-auto pr-1"
+  }, filteredIcons.map(icon => /*#__PURE__*/React.createElement("div", {
+    key: icon.id,
+    onClick: () => setActiveIcon(icon),
+    className: `glass-card p-2.5 rounded-xl cursor-pointer group relative flex flex-col justify-between ${activeIcon?.id === icon.id ? 'ring-2 ring-brand-500 bg-brand-500/10' : ''}`
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "w-full aspect-square bg-white rounded-lg p-2 flex items-center justify-center overflow-hidden mb-2 relative"
+  }, /*#__PURE__*/React.createElement("img", {
+    src: icon.url,
+    alt: icon.prompt,
+    className: "w-full h-full object-contain group-hover:scale-105 transition-transform"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "absolute top-1 left-1 bg-black/70 text-brand-400 text-[8px] font-bold px-1.5 py-0.5 rounded"
+  }, (icon.quality || '2k').toUpperCase())), /*#__PURE__*/React.createElement("p", {
+    className: "text-[11px] text-gray-300 font-medium truncate capitalize mb-1"
+  }, icon.prompt), /*#__PURE__*/React.createElement("div", {
+    className: "flex justify-between items-center text-[9px] text-gray-500"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "bg-gray-800 text-gray-300 px-1.5 py-0.5 rounded font-mono uppercase"
+  }, icon.style), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-1"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: e => {
+      e.stopPropagation();
+      downloadImage(icon);
+    },
+    className: "p-1 hover:bg-brand-500 hover:text-black rounded text-gray-400"
+  }, "⬇️"), /*#__PURE__*/React.createElement("button", {
+    onClick: e => handleDelete(icon.id, e),
+    className: "p-1 hover:bg-red-500/20 hover:text-red-400 rounded text-gray-400"
+  }, "🗑"))))))))), activeIcon && /*#__PURE__*/React.createElement("div", {
+    className: "w-full max-w-7xl mt-6 flex gap-3"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: sendToBot,
+    className: "flex-1 py-4 bg-emerald-500 text-black font-bold rounded-2xl text-lg"
+  }, "Kirim ke Bot"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => tg.close(),
+    className: "flex-1 py-4 bg-gray-800 rounded-2xl text-lg"
+  }, "Tutup App")), modalIcon && /*#__PURE__*/React.createElement("div", {
+    className: "fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "glass-panel p-6 rounded-2xl max-w-md w-full border border-brand-500/40"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex justify-between items-center mb-4"
+  }, /*#__PURE__*/React.createElement("h3", {
+    className: "text-base font-bold text-white flex items-center gap-2"
+  }, "🪄 ", t.refineTitle), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setModalIcon(null),
+    className: "text-gray-400 hover:text-white text-lg font-bold"
+  }, "✕")), /*#__PURE__*/React.createElement("div", {
+    className: "w-32 h-32 bg-white rounded-xl p-2 mx-auto mb-4 border border-gray-700"
+  }, /*#__PURE__*/React.createElement("img", {
+    src: modalIcon.url,
+    alt: "Current",
+    className: "w-full h-full object-contain"
+  })), /*#__PURE__*/React.createElement("p", {
+    className: "text-xs text-gray-400 mb-2 font-mono"
+  }, "Original: \"", modalIcon.prompt, "\""), /*#__PURE__*/React.createElement("input", {
+    type: "text",
+    placeholder: t.refinePlaceholder,
+    value: refineText,
+    onChange: e => setRefineText(e.target.value),
+    className: "w-full p-3 bg-black/80 border border-brand-500/40 rounded-xl text-xs text-white mb-4 outline-none focus:border-brand-500"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-2"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setModalIcon(null),
+    className: "flex-1 py-2.5 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs font-bold rounded-xl"
+  }, "Batal"), /*#__PURE__*/React.createElement("button", {
+    onClick: handleRefine,
+    className: "flex-1 py-2.5 bg-brand-500 hover:bg-brand-400 text-black text-xs font-bold rounded-xl"
+  }, t.refineBtn)))));
 };
 const rootElement = document.getElementById('root');
 const root = ReactDOM.createRoot(rootElement);
-root.render(/*#__PURE__*/_jsx(App, {}));
+root.render(/*#__PURE__*/React.createElement(App, null));
 </script>
 </body>
 </html>

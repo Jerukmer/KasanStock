@@ -390,8 +390,7 @@ const [quality, setQuality] = React.useState('2k');
             };
 
             const handleGenerate = async (overriddenPrompts = null) => {
-                const handleGenerate = async (overriddenPrompts = null) => {
-                    const lines = overriddenPrompts || promptsText.split('\n').map(p => p.trim()).filter(p => p.length > 0);
+                const lines = overriddenPrompts || promptsText.split('\n').map(p => p.trim()).filter(p => p.length > 0);
                     if (lines.length === 0) return;
 
                     setIsGenerating(true);
